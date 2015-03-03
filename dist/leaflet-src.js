@@ -1,5 +1,5 @@
 /*
- Leaflet 0.8-dev (f555310), a JS library for interactive maps. http://leafletjs.com
+ Leaflet 0.8-dev (d38317c), a JS library for interactive maps. http://leafletjs.com
  (c) 2010-2015 Vladimir Agafonkin, (c) 2010-2011 CloudMade
 */
 (function (window, document, undefined) {
