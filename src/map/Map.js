@@ -763,6 +763,7 @@ L.Map = L.Evented.extend({
 	_limitZoom: function (zoom) {
 		var min = this.getMinZoom(),
 		    max = this.getMaxZoom();
+		if (!L.Browser.any3d) { zoom = Math.round(zoom); }
 
 		return Math.max(min, Math.min(max, zoom));
 	}
