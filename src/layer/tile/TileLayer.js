@@ -85,7 +85,12 @@ L.TileLayer = L.GridLayer.extend({
 	},
 
 	_tileOnLoad: function (done, tile) {
-		done(null, tile);
+		// For https://github.com/Leaflet/Leaflet/issues/3332
+		if (L.Browser.ielt9) {
+			setTimeout(L.bind(done, this, null, tile), 0);
+		} else {
+			done(null, tile);
+		}
 	},
 
 	_tileOnError: function (done, tile, e) {
@@ -99,18 +104,17 @@ L.TileLayer = L.GridLayer.extend({
 	_getTileSize: function () {
 		var map = this._map,
 		    options = this.options,
-		    zoom = map.getZoom() + options.zoomOffset,
+		    zoom = this._tileZoom + options.zoomOffset,
 		    zoomN = options.maxNativeZoom;
 
 		// increase tile size when overscaling
 		return zoomN !== null && zoom > zoomN ?
-				Math.round(map.getZoomScale(zoomN, zoom) * options.tileSize) :
+				Math.round(options.tileSize / map.getZoomScale(zoomN, zoom)) :
 				options.tileSize;
 	},
 
 	_onTileRemove: function (e) {
 		e.tile.onload = null;
-		e.tile.src = L.Util.emptyImageUrl;
 	},
 
 	_getZoomForUrl: function () {
