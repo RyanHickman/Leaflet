@@ -15,7 +15,8 @@ L.Map = L.Evented.extend({
 
 		fadeAnimation: true,
 		trackResize: true,
-		markerZoomAnimation: true
+		markerZoomAnimation: true,
+		maxBoundsViscosity: 0.0
 	},
 
 	initialize: function (id, options) { // (HTMLElement or String, Object)
@@ -57,13 +58,13 @@ L.Map = L.Evented.extend({
 	// replaced by animation-powered implementation in Map.PanAnimation.js
 	setView: function (center, zoom) {
 		zoom = zoom === undefined ? this.getZoom() : zoom;
-		this._resetView(L.latLng(center), this._limitZoom(zoom));
+		this._resetView(L.latLng(center), zoom);
 		return this;
 	},
 
 	setZoom: function (zoom, options) {
 		if (!this._loaded) {
-			this._zoom = this._limitZoom(zoom);
+			this._zoom = zoom;
 			return this;
 		}
 		return this.setView(this.getCenter(), zoom, {zoom: options});
@@ -175,7 +176,7 @@ L.Map = L.Evented.extend({
 
 	panInsideBounds: function (bounds, options) {
 		var center = this.getCenter(),
-			newCenter = this._limitCenter(center, this._zoom, bounds);
+			newCenter = this._limitCenter(center, this._zoom, L.latLngBounds(bounds));
 
 		if (center.equals(newCenter)) { return this; }
 
@@ -192,7 +193,7 @@ L.Map = L.Evented.extend({
 
 		var oldSize = this.getSize();
 		this._sizeChanged = true;
-		this._initialCenter = null;
+		this._lastCenter = null;
 
 		var newSize = this.getSize(),
 		    oldCenter = oldSize.divideBy(2).round(),
@@ -271,6 +272,10 @@ L.Map = L.Evented.extend({
 			this.fire('unload');
 		}
 
+		for (var i in this._layers) {
+			this._layers[i].remove();
+		}
+
 		return this;
 	},
 
@@ -290,8 +295,8 @@ L.Map = L.Evented.extend({
 	getCenter: function () { // (Boolean) -> LatLng
 		this._checkIfLoaded();
 
-		if (this._initialCenter && !this._moved()) {
-			return this._initialCenter;
+		if (this._lastCenter && !this._moved()) {
+			return this._lastCenter;
 		}
 		return this.layerPointToLatLng(this._getCenterLayerPoint());
 	},
@@ -504,6 +509,7 @@ L.Map = L.Evented.extend({
 		this._paneRenderers = {};
 
 		this._mapPane = this.createPane('mapPane', this._container);
+		L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
 
 		this.createPane('tilePane');
 		this.createPane('shadowPane');
@@ -520,43 +526,55 @@ L.Map = L.Evented.extend({
 
 	// private methods that modify map state
 
-	_resetView: function (center, zoom, preserveMapOffset, afterZoomAnim) {
-
-		var zoomChanged = (this._zoom !== zoom);
-
-		if (!afterZoomAnim) {
-			this.fire('movestart');
-
-			if (zoomChanged) {
-				this.fire('zoomstart');
-			}
-		}
-
-		this._zoom = zoom;
-		this._initialCenter = center;
-
-		if (!preserveMapOffset) {
-			L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
-		}
-
-		this._pixelOrigin = this._getNewPixelOrigin(center);
+	_resetView: function (center, zoom) {
+		L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
 
 		var loading = !this._loaded;
 		this._loaded = true;
+		zoom = this._limitZoom(zoom);
 
-		this.fire('viewreset', {hard: !preserveMapOffset});
+		var zoomChanged = this._zoom !== zoom;
+		this
+			._moveStart(zoomChanged)
+			._move(center, zoom)
+			._moveEnd(zoomChanged);
+
+		this.fire('viewreset');
 
 		if (loading) {
 			this.fire('load');
 		}
+	},
 
-		this.fire('move');
+	_moveStart: function (zoomChanged) {
+		if (zoomChanged) {
+			this.fire('zoomstart');
+		}
+		return this.fire('movestart');
+	},
 
-		if (zoomChanged || afterZoomAnim) {
-			this.fire('zoomend');
+	_move: function (center, zoom, data) {
+		if (zoom === undefined) {
+			zoom = this._zoom;
 		}
 
-		this.fire('moveend', {hard: !preserveMapOffset});
+		var zoomChanged = this._zoom !== zoom;
+
+		this._zoom = zoom;
+		this._lastCenter = center;
+		this._pixelOrigin = this._getNewPixelOrigin(center);
+
+		if (zoomChanged) {
+			this.fire('zoom', data);
+		}
+		return this.fire('move', data);
+	},
+
+	_moveEnd: function (zoomChanged) {
+		if (zoomChanged) {
+			this.fire('zoomend');
+		}
+		return this.fire('moveend');
 	},
 
 	_rawPanBy: function (offset) {
@@ -583,6 +601,7 @@ L.Map = L.Evented.extend({
 		if (!L.DomEvent) { return; }
 
 		this._targets = {};
+		this._targets[L.stamp(this._container)] = this;
 
 		var onOff = remove ? 'off' : 'on';
 
@@ -605,45 +624,60 @@ L.Map = L.Evented.extend({
 		this._container.scrollLeft = 0;
 	},
 
-	_findEventTarget: function (src) {
+	_findEventTargets: function (src, bubble) {
+		var targets = [], target;
 		while (src) {
-			var target = this._targets[L.stamp(src)];
+			target = this._targets[L.stamp(src)];
 			if (target) {
-				return target;
+				targets.push(target);
+				if (!bubble) { break; }
 			}
 			if (src === this._container) {
 				break;
 			}
 			src = src.parentNode;
 		}
-		return null;
+		return targets;
 	},
 
 	_handleDOMEvent: function (e) {
 		if (!this._loaded || L.DomEvent._skipped(e)) { return; }
 
-		// find the layer the event is propagating from
-		var target = this._findEventTarget(e.target || e.srcElement),
-			type = e.type === 'keypress' && e.keyCode === 13 ? 'click' : e.type;
+		// find the layer the event is propagating from and its parents
+		var type = e.type === 'keypress' && e.keyCode === 13 ? 'click' : e.type;
 
-		// special case for map mouseover/mouseout events so that they're actually mouseenter/mouseleave
-		if (!target && (type === 'mouseover' || type === 'mouseout') &&
-				!L.DomEvent._checkMouse(this._container, e)) { return; }
+		if (e.type === 'click') {
+			// Fire a synthetic 'preclick' event which propagates up (mainly for closing popups).
+			var synth = L.Util.extend({}, e);
+			synth.type = 'preclick';
+			this._handleDOMEvent(synth);
+		}
 
-		// prevents outline when clicking on keyboard-focusable element
 		if (type === 'mousedown') {
+			// prevents outline when clicking on keyboard-focusable element
 			L.DomUtil.preventOutline(e.target || e.srcElement);
 		}
 
-		this._fireDOMEvent(target || this, e, type);
+		this._fireDOMEvent(e, type);
 	},
 
-	_fireDOMEvent: function (target, e, type) {
-		if (!target.listens(type, true) && (type !== 'click' || !target.listens('preclick', true))) { return; }
+	_fireDOMEvent: function (e, type, targets) {
 
 		if (type === 'contextmenu') {
 			L.DomEvent.preventDefault(e);
 		}
+
+		var isHover = type === 'mouseover' || type === 'mouseout';
+		targets = (targets || []).concat(this._findEventTargets(e.target || e.srcElement, !isHover));
+
+		if (!targets.length) {
+			targets = [this];
+
+			// special case for map mouseover/mouseout events so that they're actually mouseenter/mouseleave
+			if (isHover && !L.DomEvent._checkMouse(this._container, e)) { return; }
+		}
+
+		var target = targets[0];
 
 		// prevents firing click after you just dragged an object
 		if (e.type === 'click' && !e._simulated && this._draggableMoved(target)) { return; }
@@ -651,16 +685,20 @@ L.Map = L.Evented.extend({
 		var data = {
 			originalEvent: e
 		};
+
 		if (e.type !== 'keypress') {
 			data.containerPoint = target instanceof L.Marker ?
 					this.latLngToContainerPoint(target.getLatLng()) : this.mouseEventToContainerPoint(e);
 			data.layerPoint = this.containerPointToLayerPoint(data.containerPoint);
 			data.latlng = this.layerPointToLatLng(data.layerPoint);
 		}
-		if (type === 'click') {
-			target.fire('preclick', data, true);
+
+		for (var i = 0; i < targets.length; i++) {
+			if (targets[i].listens(type, true)) {
+				targets[i].fire(type, data, true);
+				if (data.originalEvent._stopped) { return; }
+			}
 		}
-		target.fire(type, data, true);
 	},
 
 	_draggableMoved: function (obj) {
@@ -701,7 +739,6 @@ L.Map = L.Evented.extend({
 
 	_getNewPixelOrigin: function (center, zoom) {
 		var viewHalf = this.getSize()._divideBy(2);
-		// TODO round on display, not calculation to increase precision?
 		return this.project(center, zoom)._subtract(viewHalf)._add(this._getMapPanePos())._round();
 	},
 

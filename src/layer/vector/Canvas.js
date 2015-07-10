@@ -200,36 +200,40 @@ L.Canvas = L.Renderer.extend({
 		if (!this._map || this._map._animatingZoom) { return; }
 
 		var point = this._map.mouseEventToLayerPoint(e);
-
-		// TODO don't do on each move event, throttle since it's expensive
-		for (var id in this._layers) {
-			this._handleHover(this._layers[id], e, point);
-		}
+		this._handleMouseOut(e, point);
+		this._handleMouseHover(e, point);
 	},
 
-	_handleHover: function (layer, e, point) {
-		if (!layer.options.interactive) { return; }
-
-		if (layer._containsPoint(point)) {
-			// if we just got inside the layer, fire mouseover
-			if (!layer._mouseInside) {
-				L.DomUtil.addClass(this._container, 'leaflet-interactive'); // change cursor
-				this._fireEvent(layer, e, 'mouseover');
-				layer._mouseInside = true;
-			}
-			// fire mousemove
-			this._fireEvent(layer, e);
-
-		} else if (layer._mouseInside) {
+	_handleMouseOut: function (e, point) {
+		var layer = this._hoveredLayer;
+		if (layer && !layer._containsPoint(point)) {
 			// if we're leaving the layer, fire mouseout
 			L.DomUtil.removeClass(this._container, 'leaflet-interactive');
 			this._fireEvent(layer, e, 'mouseout');
-			layer._mouseInside = false;
+			this._hoveredLayer = null;
+		}
+	},
+
+	_handleMouseHover: function (e, point) {
+		var id, layer;
+		if (!this._hoveredLayer) {
+			for (id in this._layers) {
+				layer = this._layers[id];
+				if (layer.options.interactive && layer._containsPoint(point)) {
+					L.DomUtil.addClass(this._container, 'leaflet-interactive'); // change cursor
+					this._fireEvent(layer, e, 'mouseover');
+					this._hoveredLayer = layer;
+					break;
+				}
+			}
+		}
+		if (this._hoveredLayer) {
+			this._fireEvent(this._hoveredLayer, e);
 		}
 	},
 
 	_fireEvent: function (layer, e, type) {
-		this._map._fireDOMEvent(layer, e, type || e.type);
+		this._map._fireDOMEvent(e, type || e.type, [layer]);
 	},
 
 	// TODO _bringToFront & _bringToBack, pretty tricky
