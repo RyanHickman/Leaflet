@@ -1,5 +1,5 @@
 /*
- Leaflet 1.0-dev (83e1f38), a JS library for interactive maps. http://leafletjs.com
+ Leaflet 1.0-dev (dfa8091), a JS library for interactive maps. http://leafletjs.com
  (c) 2010-2015 Vladimir Agafonkin, (c) 2010-2011 CloudMade
 */
 (function (window, document, undefined) {
@@ -180,6 +180,13 @@ L.Util = {
 
 	isArray: Array.isArray || function (obj) {
 		return (Object.prototype.toString.call(obj) === '[object Array]');
+	},
+
+	indexOf: function (array, el) {
+		for (var i = 0; i < array.length; i++) {
+			if (array[i] === el) { return i; }
+		}
+		return -1;
 	},
 
 	// minimal image URI, set to an image when disposing to flush memory
@@ -1124,6 +1131,10 @@ L.DomUtil = {
 	};
 
 	L.DomUtil.preventOutline = function (element) {
+		while (element.tabIndex === -1) {
+			element = element.parentNode;
+		}
+		if (!element) { return; }
 		L.DomUtil.restoreOutline();
 		this._outlineElement = element;
 		this._outlineStyle = element.style.outline;
@@ -1963,8 +1974,8 @@ L.Map = L.Evented.extend({
 		return this._size.clone();
 	},
 
-	getPixelBounds: function () {
-		var topLeftPoint = this._getTopLeftPoint();
+	getPixelBounds: function (center, zoom) {
+		var topLeftPoint = this._getTopLeftPoint(center, zoom);
 		return new L.Bounds(topLeftPoint, topLeftPoint.add(this.getSize()));
 	},
 
@@ -2224,11 +2235,11 @@ L.Map = L.Evented.extend({
 		this._container.scrollLeft = 0;
 	},
 
-	_findEventTargets: function (src, bubble) {
+	_findEventTargets: function (src, type, bubble) {
 		var targets = [], target;
 		while (src) {
 			target = this._targets[L.stamp(src)];
-			if (target) {
+			if (target && target.listens(type, true)) {
 				targets.push(target);
 				if (!bubble) { break; }
 			}
@@ -2268,7 +2279,7 @@ L.Map = L.Evented.extend({
 		}
 
 		var isHover = type === 'mouseover' || type === 'mouseout';
-		targets = (targets || []).concat(this._findEventTargets(e.target || e.srcElement, !isHover));
+		targets = (targets || []).concat(this._findEventTargets(e.target || e.srcElement, type, !isHover));
 
 		if (!targets.length) {
 			targets = [this];
@@ -2287,17 +2298,17 @@ L.Map = L.Evented.extend({
 		};
 
 		if (e.type !== 'keypress') {
-			data.containerPoint = target instanceof L.Marker ?
+			var isMarker = target instanceof L.Marker;
+			data.containerPoint = isMarker ?
 					this.latLngToContainerPoint(target.getLatLng()) : this.mouseEventToContainerPoint(e);
 			data.layerPoint = this.containerPointToLayerPoint(data.containerPoint);
-			data.latlng = this.layerPointToLatLng(data.layerPoint);
+			data.latlng = isMarker ? target.getLatLng() : this.layerPointToLatLng(data.layerPoint);
 		}
 
 		for (var i = 0; i < targets.length; i++) {
-			if (targets[i].listens(type, true)) {
-				targets[i].fire(type, data, true);
-				if (data.originalEvent._stopped) { return; }
-			}
+			targets[i].fire(type, data, true);
+			if (data.originalEvent._stopped
+				|| (targets[i].options.nonBubblingEvents && L.Util.indexOf(targets[i].options.nonBubblingEvents, type) !== -1)) { return; }
 		}
 	},
 
@@ -2333,8 +2344,11 @@ L.Map = L.Evented.extend({
 		return pos && !pos.equals([0, 0]);
 	},
 
-	_getTopLeftPoint: function () {
-		return this.getPixelOrigin().subtract(this._getMapPanePos());
+	_getTopLeftPoint: function (center, zoom) {
+		var pixelOrigin = center && zoom !== undefined ?
+			this._getNewPixelOrigin(center, zoom) :
+			this.getPixelOrigin();
+		return pixelOrigin.subtract(this._getMapPanePos());
 	},
 
 	_getNewPixelOrigin: function (center, zoom) {
@@ -2415,7 +2429,8 @@ L.map = function (id, options) {
 L.Layer = L.Evented.extend({
 
 	options: {
-		pane: 'overlayPane'
+		pane: 'overlayPane',
+		nonBubblingEvents: []  // Array of events that should not be bubbled to DOM parents (like the map)
 	},
 
 	addTo: function (map) {
@@ -3860,6 +3875,7 @@ L.Marker = L.Layer.extend({
 
 	options: {
 		pane: 'markerPane',
+		nonBubblingEvents: ['click', 'dblclick', 'mouseover', 'mouseout', 'contextmenu'],
 
 		icon: new L.Icon.Default(),
 		// title: '',
@@ -7672,8 +7688,12 @@ L.Map.TouchZoom = L.Handler.extend({
 		var p1 = map.mouseEventToContainerPoint(e.touches[0]),
 		    p2 = map.mouseEventToContainerPoint(e.touches[1]);
 
-		this._pinchStartPoint = p1.add(p2)._divideBy(2);
-		this._startCenter = map.containerPointToLatLng(map.getSize()._divideBy(2));
+		this._centerPoint = map.getSize()._divideBy(2);
+		this._startLatLng = map.containerPointToLatLng(this._centerPoint);
+		if (map.options.touchZoom !== 'center') {
+			this._pinchStartLatLng = map.containerPointToLatLng(p1.add(p2)._divideBy(2));
+		}
+
 		this._startDist = p1.distanceTo(p2);
 		this._startZoom = map.getZoom();
 
@@ -7695,20 +7715,20 @@ L.Map.TouchZoom = L.Handler.extend({
 		var map = this._map,
 		    p1 = map.mouseEventToContainerPoint(e.touches[0]),
 		    p2 = map.mouseEventToContainerPoint(e.touches[1]),
-		    scale = p1.distanceTo(p2) / this._startDist,
-		    delta;
+		    scale = p1.distanceTo(p2) / this._startDist;
+
 
 		this._zoom = map.getScaleZoom(scale, this._startZoom);
 
 		if (map.options.touchZoom === 'center') {
-			delta = new L.Point(0, 0);
-			this._center = map.getCenter();
+			this._center = this._startLatLng;
+			if (scale === 1) { return; }
 		} else {
-			delta = p1._add(p2)._divideBy(2)._subtract(this._pinchStartPoint);
-			this._center = map.containerPointToLatLng(map.latLngToContainerPoint(this._startCenter).subtract(delta));
+			// Get delta from pinch to center, so centerLatLng is delta applied to initial pinchLatLng
+			var delta = p1._add(p2)._divideBy(2)._subtract(this._centerPoint);
+			if (scale === 1 && delta.x === 0 && delta.y === 0) { return; }
+			this._center = map.unproject(map.project(this._pinchStartLatLng).subtract(delta));
 		}
-
-		if (scale === 1 && delta.x === 0 && delta.y === 0) { return; }
 
 		if (!map.options.bounceAtZoomLimits) {
 			if ((this._zoom <= map.getMinZoom() && scale < 1) ||
