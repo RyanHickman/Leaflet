@@ -630,8 +630,8 @@ L.Map = L.Evented.extend({
 			target = this._targets[L.stamp(src)];
 			if (target && target.listens(type, true)) {
 				targets.push(target);
-				if (!bubble) { break; }
 			}
+			if (!bubble) { break; }
 			if (src === this._container) {
 				break;
 			}
@@ -663,10 +663,6 @@ L.Map = L.Evented.extend({
 
 	_fireDOMEvent: function (e, type, targets) {
 
-		if (type === 'contextmenu') {
-			L.DomEvent.preventDefault(e);
-		}
-
 		var isHover = type === 'mouseover' || type === 'mouseout';
 		targets = (targets || []).concat(this._findEventTargets(e.target || e.srcElement, type, !isHover));
 
@@ -675,12 +671,15 @@ L.Map = L.Evented.extend({
 
 			// special case for map mouseover/mouseout events so that they're actually mouseenter/mouseleave
 			if (isHover && !L.DomEvent._checkMouse(this._container, e)) { return; }
+		} else if (type === 'contextmenu') {
+			// we only want to call preventDefault when targets listen to it.
+			L.DomEvent.preventDefault(e);
 		}
 
 		var target = targets[0];
 
 		// prevents firing click after you just dragged an object
-		if (e.type === 'click' && !e._simulated && this._draggableMoved(target)) { return; }
+		if ((e.type === 'click' || e.type === 'preclick') && !e._simulated && this._draggableMoved(target)) { return; }
 
 		var data = {
 			originalEvent: e

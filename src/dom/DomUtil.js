@@ -221,7 +221,7 @@ L.DomUtil = {
 		while (element.tabIndex === -1) {
 			element = element.parentNode;
 		}
-		if (!element) { return; }
+		if (!element || !element.style) { return; }
 		L.DomUtil.restoreOutline();
 		this._outlineElement = element;
 		this._outlineStyle = element.style.outline;
