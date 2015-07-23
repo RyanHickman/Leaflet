@@ -1,10 +1,10 @@
 /*
- Leaflet 1.0-dev (dfa8091), a JS library for interactive maps. http://leafletjs.com
+ Leaflet 1.0.0-beta.2 (e8bf9a7), a JS library for interactive maps. http://leafletjs.com
  (c) 2010-2015 Vladimir Agafonkin, (c) 2010-2011 CloudMade
 */
 (function (window, document, undefined) {
 var L = {
-	version: '1.0-dev'
+	version: '1.0.0-beta.2'
 };
 
 function expose() {
@@ -1134,7 +1134,7 @@ L.DomUtil = {
 		while (element.tabIndex === -1) {
 			element = element.parentNode;
 		}
-		if (!element) { return; }
+		if (!element || !element.style) { return; }
 		L.DomUtil.restoreOutline();
 		this._outlineElement = element;
 		this._outlineStyle = element.style.outline;
@@ -2241,8 +2241,8 @@ L.Map = L.Evented.extend({
 			target = this._targets[L.stamp(src)];
 			if (target && target.listens(type, true)) {
 				targets.push(target);
-				if (!bubble) { break; }
 			}
+			if (!bubble) { break; }
 			if (src === this._container) {
 				break;
 			}
@@ -2274,10 +2274,6 @@ L.Map = L.Evented.extend({
 
 	_fireDOMEvent: function (e, type, targets) {
 
-		if (type === 'contextmenu') {
-			L.DomEvent.preventDefault(e);
-		}
-
 		var isHover = type === 'mouseover' || type === 'mouseout';
 		targets = (targets || []).concat(this._findEventTargets(e.target || e.srcElement, type, !isHover));
 
@@ -2286,12 +2282,15 @@ L.Map = L.Evented.extend({
 
 			// special case for map mouseover/mouseout events so that they're actually mouseenter/mouseleave
 			if (isHover && !L.DomEvent._checkMouse(this._container, e)) { return; }
+		} else if (type === 'contextmenu') {
+			// we only want to call preventDefault when targets listen to it.
+			L.DomEvent.preventDefault(e);
 		}
 
 		var target = targets[0];
 
 		// prevents firing click after you just dragged an object
-		if (e.type === 'click' && !e._simulated && this._draggableMoved(target)) { return; }
+		if ((e.type === 'click' || e.type === 'preclick') && !e._simulated && this._draggableMoved(target)) { return; }
 
 		var data = {
 			originalEvent: e
@@ -4941,7 +4940,7 @@ L.Map.include({
 		var renderer = layer.options.renderer || this._getPaneRenderer(layer.options.pane) || this.options.renderer || this._renderer;
 
 		if (!renderer) {
-			renderer = this._renderer = (L.SVG && L.svg()) || (L.Canvas && L.canvas());
+			renderer = this._renderer = (this.options.preferCanvas && L.canvas()) || L.svg();
 		}
 
 		if (!this.hasLayer(renderer)) {
@@ -6175,14 +6174,17 @@ L.Canvas = L.Renderer.extend({
 		var container = this._container = document.createElement('canvas');
 
 		L.DomEvent
-			.on(container, 'mousemove', this._onMouseMove, this)
-			.on(container, 'click dblclick mousedown mouseup contextmenu', this._onClick, this);
+			.on(container, 'mousemove', L.Util.throttle(this._onMouseMove, 32, this), this)
+			.on(container, 'click dblclick mousedown mouseup contextmenu', this._onClick, this)
+			.on(container, 'mouseout', this._handleMouseOut, this);
 
 		this._ctx = container.getContext('2d');
 	},
 
 	_update: function () {
 		if (this._map._animatingZoom && this._bounds) { return; }
+
+		this._drawnLayers = {};
 
 		L.Renderer.prototype._update.call(this);
 
@@ -6255,12 +6257,13 @@ L.Canvas = L.Renderer.extend({
 
 		for (var id in this._layers) {
 			layer = this._layers[id];
-			if (!this._redrawBounds || layer._pxBounds.intersects(this._redrawBounds)) {
-				layer._updatePath();
-			}
+
 			if (clear && layer._removed) {
 				delete layer._removed;
 				delete this._layers[id];
+
+			} else if (!this._redrawBounds || layer._pxBounds.intersects(this._redrawBounds)) {
+				layer._updatePath();
 			}
 		}
 	},
@@ -6273,6 +6276,8 @@ L.Canvas = L.Renderer.extend({
 		    ctx = this._ctx;
 
 		if (!len) { return; }
+
+		this._drawnLayers[layer._leaflet_id] = layer;
 
 		ctx.beginPath();
 
@@ -6355,16 +6360,17 @@ L.Canvas = L.Renderer.extend({
 	},
 
 	_onMouseMove: function (e) {
-		if (!this._map || this._map._animatingZoom) { return; }
+		if (!this._map || this._map.dragging._draggable._moving || this._map._animatingZoom) { return; }
 
 		var point = this._map.mouseEventToLayerPoint(e);
 		this._handleMouseOut(e, point);
 		this._handleMouseHover(e, point);
 	},
 
+
 	_handleMouseOut: function (e, point) {
 		var layer = this._hoveredLayer;
-		if (layer && !layer._containsPoint(point)) {
+		if (layer && (e.type === 'mouseout' || !layer._containsPoint(point))) {
 			// if we're leaving the layer, fire mouseout
 			L.DomUtil.removeClass(this._container, 'leaflet-interactive');
 			this._fireEvent(layer, e, 'mouseout');
@@ -6375,8 +6381,8 @@ L.Canvas = L.Renderer.extend({
 	_handleMouseHover: function (e, point) {
 		var id, layer;
 		if (!this._hoveredLayer) {
-			for (id in this._layers) {
-				layer = this._layers[id];
+			for (id in this._drawnLayers) {
+				layer = this._drawnLayers[id];
 				if (layer.options.interactive && layer._containsPoint(point)) {
 					L.DomUtil.addClass(this._container, 'leaflet-interactive'); // change cursor
 					this._fireEvent(layer, e, 'mouseover');
@@ -7497,7 +7503,7 @@ L.extend(L.DomEvent, {
 		}
 
 		function onTouchEnd() {
-			if (doubleTap) {
+			if (doubleTap && !touch.cancelBubble) {
 				if (L.Browser.pointer) {
 					// work around .type being readonly with MSPointer* events
 					var newTouch = {},
@@ -7915,10 +7921,14 @@ L.Map.BoxZoom = L.Handler.extend({
 		return this._moved;
 	},
 
+	_resetState: function () {
+		this._moved = false;
+	},
+
 	_onMouseDown: function (e) {
 		if (!e.shiftKey || ((e.which !== 1) && (e.button !== 1))) { return false; }
 
-		this._moved = false;
+		this._resetState();
 
 		L.DomUtil.disableTextSelection();
 		L.DomUtil.disableImageDrag();
@@ -7977,6 +7987,9 @@ L.Map.BoxZoom = L.Handler.extend({
 		this._finish();
 
 		if (!this._moved) { return; }
+		// Postpone to next JS tick so internal click event handling
+		// still see it as "moved".
+		setTimeout(L.bind(this._resetState, this), 0);
 
 		var bounds = new L.LatLngBounds(
 		        this._map.containerPointToLatLng(this._startPoint),
@@ -8604,7 +8617,7 @@ L.Control.Scale = L.Control.extend({
 		var map = this._map,
 		    y = map.getSize().y / 2;
 
-		var maxMeters = L.CRS.Earth.distance(
+		var maxMeters = map.distance(
 				map.containerPointToLatLng([0, y]),
 				map.containerPointToLatLng([this.options.maxWidth, y]));
 
@@ -8887,7 +8900,7 @@ L.Control.Layers = L.Control.extend({
 
 		this._handlingClick = true;
 
-		for (var i = 0, len = inputs.length; i < len; i++) {
+		for (var i = inputs.length - 1; i >= 0; i--) {
 			input = inputs[i];
 			layer = this._layers[input.layerId].layer;
 			hasLayer = this._map.hasLayer(layer);
@@ -9026,11 +9039,11 @@ L.Map.include({
 			}
 
 			// try animating pan or zoom
-			var animated = (this._zoom !== zoom) ?
+			var moved = (this._zoom !== zoom) ?
 				this._tryAnimatedZoom && this._tryAnimatedZoom(center, zoom, options.zoom) :
 				this._tryAnimatedPan(center, options.pan);
 
-			if (animated) {
+			if (moved) {
 				// prevent resize handler call, the view will refresh after animation anyway
 				clearTimeout(this._sizeTimer);
 				return this;
@@ -9048,7 +9061,7 @@ L.Map.include({
 		options = options || {};
 
 		if (!offset.x && !offset.y) {
-			return this;
+			return this.fire('moveend');
 		}
 		//If we pan too far then chrome gets issues with tiles
 		// and makes them disappear or appear in the wrong place (slightly offset) #2602
@@ -9103,7 +9116,7 @@ L.Map.include({
 
 		this.panBy(offset, options);
 
-		return (options && options.animate) !== false;
+		return true;
 	}
 });
 
