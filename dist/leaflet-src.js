@@ -1,5 +1,5 @@
 /*
- Leaflet 1.0.0-beta.2 (e8bf9a7), a JS library for interactive maps. http://leafletjs.com
+ Leaflet 1.0.0-beta.2 (0256a1c), a JS library for interactive maps. http://leafletjs.com
  (c) 2010-2015 Vladimir Agafonkin, (c) 2010-2011 CloudMade
 */
 (function (window, document, undefined) {
@@ -2812,13 +2812,13 @@ L.GridLayer = L.Layer.extend({
 
 	_updateOpacity: function () {
 		if (!this._map) { return; }
-		var opacity = this.options.opacity;
 
 		// IE doesn't inherit filter opacity properly, so we're forced to set it on tiles
-		if (!L.Browser.ielt9 && !this._map._fadeAnimated) {
-			L.DomUtil.setOpacity(this._container, opacity);
+		if (L.Browser.ielt9 || !this._map._fadeAnimated) {
 			return;
 		}
+
+		L.DomUtil.setOpacity(this._container, this.options.opacity);
 
 		var now = +new Date(),
 			nextFrame = false,
@@ -2829,11 +2829,11 @@ L.GridLayer = L.Layer.extend({
 			if (!tile.current || !tile.loaded) { continue; }
 
 			var fade = Math.min(1, (now - tile.loaded) / 200);
+
+			L.DomUtil.setOpacity(tile.el, fade);
 			if (fade < 1) {
-				L.DomUtil.setOpacity(tile.el, opacity * fade);
 				nextFrame = true;
 			} else {
-				L.DomUtil.setOpacity(tile.el, opacity);
 				if (tile.active) { willPrune = true; }
 				tile.active = true;
 			}
@@ -6082,8 +6082,8 @@ L.SVG.include(!L.Browser.vml ? {} : {
 		if (options.stroke) {
 			if (!stroke) {
 				stroke = layer._stroke = L.SVG.create('stroke');
-				container.appendChild(stroke);
 			}
+			container.appendChild(stroke);
 			stroke.weight = options.weight + 'px';
 			stroke.color = options.color;
 			stroke.opacity = options.opacity;
@@ -6106,8 +6106,8 @@ L.SVG.include(!L.Browser.vml ? {} : {
 		if (options.fill) {
 			if (!fill) {
 				fill = layer._fill = L.SVG.create('fill');
-				container.appendChild(fill);
 			}
+			container.appendChild(fill);
 			fill.color = options.fillColor || options.color;
 			fill.opacity = options.fillOpacity;
 
@@ -6257,13 +6257,12 @@ L.Canvas = L.Renderer.extend({
 
 		for (var id in this._layers) {
 			layer = this._layers[id];
-
+			if (!this._redrawBounds || layer._pxBounds.intersects(this._redrawBounds)) {
+				layer._updatePath();
+			}
 			if (clear && layer._removed) {
 				delete layer._removed;
 				delete this._layers[id];
-
-			} else if (!this._redrawBounds || layer._pxBounds.intersects(this._redrawBounds)) {
-				layer._updatePath();
 			}
 		}
 	},
