@@ -17,8 +17,8 @@ L.LatLngBounds.prototype = {
 	// extend the bounds to contain the given point or bounds
 	extend: function (obj) { // (LatLng) or (LatLngBounds)
 		var sw = this._southWest,
-			ne = this._northEast,
-			sw2, ne2;
+		    ne = this._northEast,
+		    sw2, ne2;
 
 		if (obj instanceof L.LatLng) {
 			sw2 = obj;
@@ -165,7 +165,7 @@ L.LatLngBounds.prototype = {
 	}
 };
 
-//TODO International date line?
+// TODO International date line?
 
 L.latLngBounds = function (a, b) { // (LatLngBounds) or (LatLng, LatLng)
 	if (!a || a instanceof L.LatLngBounds) {

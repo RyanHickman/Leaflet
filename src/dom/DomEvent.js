@@ -67,7 +67,7 @@ L.DomEvent = {
 			} else if ((type === 'mouseenter') || (type === 'mouseleave')) {
 				handler = function (e) {
 					e = e || window.event;
-					if (L.DomEvent._checkMouse(obj, e)) {
+					if (L.DomEvent._isExternalTarget(obj, e)) {
 						originalHandler(e);
 					}
 				};
@@ -211,7 +211,7 @@ L.DomEvent = {
 	},
 
 	// check if element really left/entered the event target (for mouseenter/mouseleave)
-	_checkMouse: function (el, e) {
+	_isExternalTarget: function (el, e) {
 
 		var related = e.relatedTarget;
 
@@ -230,7 +230,7 @@ L.DomEvent = {
 	// this is a horrible workaround for a bug in Android where a single touch triggers two click events
 	_filterClick: function (e, handler) {
 		var timeStamp = (e.timeStamp || e.originalEvent.timeStamp),
-			elapsed = L.DomEvent._lastClick && (timeStamp - L.DomEvent._lastClick);
+		    elapsed = L.DomEvent._lastClick && (timeStamp - L.DomEvent._lastClick);
 
 		// are they closer together than 500ms yet more than 100ms?
 		// Android typically triggers them ~300ms apart while multiple listeners

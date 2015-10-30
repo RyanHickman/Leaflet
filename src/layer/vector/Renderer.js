@@ -36,34 +36,39 @@ L.Renderer = L.Layer.extend({
 	getEvents: function () {
 		var events = {
 			viewreset: this._reset,
-			zoom: this._updateTransform,
+			zoom: this._onZoom,
 			moveend: this._update
 		};
 		if (this._zoomAnimated) {
-			events.zoomanim = this._animateZoom;
+			events.zoomanim = this._onAnimZoom;
 		}
 		return events;
 	},
 
-	_animateZoom: function (e) {
-		var scale = this._map.getZoomScale(e.zoom, this._zoom),
-		    offset = this._map._latLngToNewLayerPoint(this._topLeft, e.zoom, e.center);
-
-		L.DomUtil.setTransform(this._container, offset, scale);
+	_onAnimZoom: function (ev) {
+		this._updateTransform(ev.center, ev.zoom);
 	},
 
-	_updateTransform: function () {
-		var zoom = this._map.getZoom(),
-		    center = this._map.getCenter(),
-		    scale = this._map.getZoomScale(zoom, this._zoom),
-		    offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
+	_onZoom: function () {
+		this._updateTransform(this._map.getCenter(), this._map.getZoom());
+	},
 
-		L.DomUtil.setTransform(this._container, offset, scale);
+	_updateTransform: function (center, zoom) {
+		var scale = this._map.getZoomScale(zoom, this._zoom),
+		    position = L.DomUtil.getPosition(this._container),
+		    viewHalf = this._map.getSize().multiplyBy(0.5 + this.options.padding),
+		    currentCenterPoint = this._map.project(this._center, zoom),
+		    destCenterPoint = this._map.project(center, zoom),
+		    centerOffset = destCenterPoint.subtract(currentCenterPoint),
+
+		    topLeftOffset = viewHalf.multiplyBy(-scale).add(position).add(viewHalf).subtract(centerOffset);
+
+		L.DomUtil.setTransform(this._container, topLeftOffset, scale);
 	},
 
 	_reset: function () {
 		this._update();
-		this._updateTransform();
+		this._updateTransform(this._center, this._zoom);
 	},
 
 	_update: function () {
@@ -74,7 +79,7 @@ L.Renderer = L.Layer.extend({
 
 		this._bounds = new L.Bounds(min, min.add(size.multiplyBy(1 + p * 2)).round());
 
-		this._topLeft = this._map.layerPointToLatLng(min);
+		this._center = this._map.getCenter();
 		this._zoom = this._map.getZoom();
 	}
 });
