@@ -1,5 +1,5 @@
 /*
- Leaflet 1.0.0-beta.2 (a314853), a JS library for interactive maps. http://leafletjs.com
+ Leaflet 1.0.0-beta.2 (3bb19f1), a JS library for interactive maps. http://leafletjs.com
  (c) 2010-2015 Vladimir Agafonkin, (c) 2010-2011 CloudMade
 */
 (function (window, document, undefined) {
@@ -1085,7 +1085,7 @@ L.DomUtil = {
 		// this method is only used for elements previously positioned using setPosition,
 		// so it's safe to cache the position for performance
 
-		return el._leaflet_pos;
+		return el._leaflet_pos || new L.Point(0, 0);
 	}
 };
 
@@ -1742,7 +1742,7 @@ L.Map = L.Evented.extend({
 
 		    zoom = this.getBoundsZoom(bounds, false, paddingTL.add(paddingBR));
 
-		zoom = options.maxZoom ? Math.min(options.maxZoom, zoom) : zoom;
+		zoom = (typeof options.maxZoom === 'number') ? Math.min(options.maxZoom, zoom) : zoom;
 
 		var paddingOffset = paddingBR.subtract(paddingTL).divideBy(2),
 
@@ -2310,7 +2310,6 @@ L.Map = L.Evented.extend({
 	_handleDOMEvent: function (e) {
 		if (!this._loaded || L.DomEvent._skipped(e)) { return; }
 
-		// find the layer the event is propagating from and its parents
 		var type = e.type === 'keypress' && e.keyCode === 13 ? 'click' : e.type;
 
 		if (e.type === 'click') {
@@ -2332,6 +2331,7 @@ L.Map = L.Evented.extend({
 
 		if (e._stopped) { return; }
 
+		// Find the layer the event is propagating from and its parents.
 		targets = (targets || []).concat(this._findEventTargets(e, type));
 
 		if (!targets.length) { return; }
@@ -2918,6 +2918,8 @@ L.GridLayer = L.Layer.extend({
 
 		var zoom = this._tileZoom,
 		    maxZoom = this.options.maxZoom;
+
+		if (zoom === undefined) { return undefined; }
 
 		for (var z in this._levels) {
 			if (this._levels[z].el.children.length || z === zoom) {
@@ -4313,6 +4315,7 @@ L.Popup = L.Layer.extend({
 
 		if (this._source) {
 			this._source.fire('popupopen', {popup: this}, true);
+			this._source.on('preclick', L.DomEvent.stopPropagation);
 		}
 	},
 
@@ -4333,6 +4336,7 @@ L.Popup = L.Layer.extend({
 
 		if (this._source) {
 			this._source.fire('popupclose', {popup: this}, true);
+			this._source.off('preclick', L.DomEvent.stopPropagation);
 		}
 	},
 
@@ -6669,7 +6673,7 @@ L.GeoJSON = L.FeatureGroup.extend({
 
 	resetStyle: function (layer) {
 		// reset any custom styles
-		layer.options = layer.defaultOptions;
+		layer.options = L.Util.extend({}, layer.defaultOptions);
 		this._setLayerStyle(layer, this.options.style);
 		return this;
 	},
